@@ -4,7 +4,7 @@ import json
 import os
 from datetime import datetime, timedelta
 
-# 깃허브 보안 설정값 가져오기
+# 환경 변수 가져오기
 CONSUMER_KEY = os.environ.get('X_CONSUMER_KEY')
 CONSUMER_SECRET = os.environ.get('X_CONSUMER_SECRET')
 ACCESS_TOKEN = os.environ.get('X_ACCESS_TOKEN')
@@ -25,17 +25,26 @@ def get_stats():
     return res.json()
 
 def send_slack(data):
-    try:
-        metrics = data['data'][0]['id_data'][0]['metrics']
-        # 지출 비용 계산 (마이크로 단위이므로 1,000,000으로 나눔)
-        spend = metrics.get('billed_charge_local_micro', [0])[0] / 1000000
-        msg = f"📊 *X 광고 실적 ({datetime.now().strftime('%m/%d')})*\n" \
-              f"- 노출수: {metrics.get('impressions', [0])[0]:,}회\n" \
-              f"- 클릭수: {metrics.get('clicks', [0])[0]:,}회\n" \
-              f"- 지출: ${spend:.2f}"
-        requests.post(SLACK_URL, data=json.dumps({"text": msg}))
-    except Exception as e:
-        requests.post(SLACK_URL, data=json.dumps({"text": f"❌ 에러 발생: {str(e)}"}))
+    # 만약 X API에서 에러를 보냈다면 그 내용을 그대로 슬랙에 출력
+    if 'errors' in data:
+        error_msg = data['errors'][0].get('message', '알 수 없는 에러')
+        code = data['errors'][0].get('code', 'NO_CODE')
+        final_msg = f"❌ *X API 에러 발생*\n- 코드: {code}\n- 내용: {error_msg}"
+    elif 'data' not in data:
+        final_msg = f"❓ *데이터 없음*\n- API 응답 전체: {json.dumps(data)}"
+    else:
+        # 정상 작동 시 기존 로직
+        try:
+            metrics = data['data'][0]['id_data'][0]['metrics']
+            spend = metrics.get('billed_charge_local_micro', [0])[0] / 1000000
+            final_msg = f"📊 *X 광고 실적 ({datetime.now().strftime('%m/%d')})*\n" \
+                        f"- 노출수: {metrics.get('impressions', [0])[0]:,}회\n" \
+                        f"- 클릭수: {metrics.get('clicks', [0])[0]:,}회\n" \
+                        f"- 지출: ${spend:.2f}"
+        except Exception as e:
+            final_msg = f"⚠️ *코드 가공 에러*: {str(e)}\n- 응답 데이터: {json.dumps(data)}"
+
+    requests.post(SLACK_URL, data=json.dumps({"text": final_msg}))
 
 if __name__ == "__main__":
     result = get_stats()
